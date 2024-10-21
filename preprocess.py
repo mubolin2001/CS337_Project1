@@ -5,6 +5,10 @@ Preprocess each tweet in the dataset. Store the preprocessed tweets in a list.
 import re
 import json
 from tweet import Tweet
+from fify import fix_text
+import unidecode
+from langdetect import detect, detect_langs
+
 
 def english_only(data):
     '''
@@ -13,16 +17,37 @@ def english_only(data):
     :param data: a json object representing a tweet.
     :return: cleaned tweet string.
     '''
-    pass
+    '''
+    find hashtags and remove them first
+    then remove non-english tweets
+    '''
+    text = data["text"]
+    try:
+        lang = detect(text)
+        if lang == 'en':
+            return data
+        else:
+            return None
+    except:
+        return None
+
 
 
 def extract_hashtags(data):
     '''
     Given a dataset of tweet data, extract all hashtags from the tweets.
     :param data: a json object representing a tweet.
-    :return: hashtag
+    :return: hastags.
     '''
-    pass
+    """
+    hastags: #abc or @abc
+    """
+    text = data["text"]
+    hashtags = re.findall(r"#(\w+)", text)
+    text = re.sub(r"#(\w+)", "", text).strip()
+    data["text"] = text
+    data["hashtags"] = hashtags
+    return hashtags
 
 
 def substitute_scrap(data):
@@ -31,8 +56,8 @@ def substitute_scrap(data):
     :param data: a json object representing a tweet.
     :return: cleaned tweet string.
     '''
-    pass
-
+    data["text"] = fix_text(data["text"])
+    return data
 
 def exclude_non_alphanumeric(data):
     '''
@@ -83,10 +108,10 @@ def preprocess(file):
     tweet_list = []
     for line in data:
         tweet = Tweet()
-        text = line['text']
-        text = english_only(text)
-        hashtag = extract_hashtags(text)
-        text = substitute_scrap(text)
+        substitute_scrap(line)
+        hashtag = extract_hashtags(line)
+        en_tweet = english_only(line)
+        text = None if en_tweet is None else en_tweet["text"]
         text = exclude_non_alphanumeric(text)
         # text = process_url(text)
         text = exclude_extra_whitespace(text)
