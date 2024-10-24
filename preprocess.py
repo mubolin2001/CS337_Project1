@@ -4,34 +4,53 @@ Preprocess each tweet in the dataset. Store the preprocessed tweets in a list.
 
 import re
 import json
+import ftfy
+from langdetect import detect, LangDetectException
 from tweet import Tweet
 
-def english_only(data):
+# def english_only(text):
+#     '''
+#     Given a dataset of tweet data, remove all non-English tweets.
+#     Use langdetect to detect the language of the tweet.
+#     :param text: string representing a tweet message.
+#     :return: cleaned tweet string.
+#     '''
+#     detected = detect(text)
+#     if detected == 'en':
+#         return text
+
+def is_English(text):
     '''
-    Given a dataset of tweet data, remove all non-English tweets.
+    Given a dataset of tweet data, return True if the tweet is in English.
     Use langdetect to detect the language of the tweet.
-    :param data: a json object representing a tweet.
-    :return: cleaned tweet string.
     '''
-    pass
+    try:
+        if detect(text) == 'en':
+            return True
+        else:
+            return False
+    except LangDetectException:
+        return False
 
 
-def extract_hashtags(data):
+def extract_hashtags(text):
     '''
     Given a dataset of tweet data, extract all hashtags from the tweets.
-    :param data: a json object representing a tweet.
-    :return: hashtag
+    :param text: a string representing a tweet mesaage.
+    :return: a tuple (trimmed text, hashtags)
     '''
-    pass
+    hashtags = re.findall(r"#(\w+)", text)  #list of hashtags
+    return (re.sub(r'#(\w+)', '', text), hashtags)
 
 
 def substitute_scrap(data):
     '''
     Given a dataset of tweet data, substitute all scrap characters using ftfy.
-    :param data: a json object representing a tweet.
+    :param data: a string containing tweet message.
     :return: cleaned tweet string.
     '''
-    pass
+    fixed = ftfy.fix_text(data)
+    return fixed
 
 
 def exclude_non_alphanumeric(data):
@@ -41,7 +60,7 @@ def exclude_non_alphanumeric(data):
     :param data: a json object representing a tweet.
     :return: cleaned tweet string.
     '''
-    pass
+    return data
 
 
 def process_url(data):
@@ -84,15 +103,16 @@ def preprocess(file):
     for line in data:
         tweet = Tweet()
         text = line['text']
-        text = english_only(text)
-        hashtag = extract_hashtags(text)
+        # if not is_English(text):
+        #     continue
+        text, hashtags = extract_hashtags(text)
         text = substitute_scrap(text)
-        text = exclude_non_alphanumeric(text)
-        # text = process_url(text)
-        text = exclude_extra_whitespace(text)
+        # text = exclude_non_alphanumeric(text)
+        # # text = process_url(text)
+        # text = exclude_extra_whitespace(text)
         tweet.text = text
-        tweet.hashtags = hashtag
-        tweet.timestamp = line['timestamp']
+        tweet.hashtags = hashtags
+        tweet.timestamp = line['timestamp_ms']
         tweet.user = line['user']
         tweet.id = line['id']
         tweet_list.append(tweet)
