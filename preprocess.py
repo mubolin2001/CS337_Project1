@@ -5,7 +5,7 @@ Preprocess each tweet in the dataset. Store the preprocessed tweets in a list.
 import re
 import json
 from tweet import Tweet
-from fify import fix_text
+from ftfy import fix_text
 import unidecode
 from langdetect import detect, detect_langs
 
@@ -105,22 +105,43 @@ def preprocess(file):
         data = json.load(file)
 
     # Preprocess the data
+    count = 0
     tweet_list = []
     for line in data:
+        #print(count)
+        count += 1
         tweet = Tweet()
         substitute_scrap(line)
         hashtag = extract_hashtags(line)
         en_tweet = english_only(line)
         text = None if en_tweet is None else en_tweet["text"]
-        text = exclude_non_alphanumeric(text)
-        # text = process_url(text)
+        if text is None:
+            continue
+        #text = exclude_non_alphanumeric(text)
+        #text = process_url(text)
         text = exclude_extra_whitespace(text)
         tweet.text = text
         tweet.hashtags = hashtag
-        tweet.timestamp = line['timestamp']
+        tweet.timestamp = line['timestamp_ms']
         tweet.user = line['user']
         tweet.id = line['id']
         tweet_list.append(tweet)
+        '''if count == 1:
+            print(tweet.text)
+            print(tweet.hashtags)
+            print(tweet.timestamp)
+            print(tweet.user)
+            print(tweet.id)
+            print("\n")'''
 
     return tweet_list
 
+if __name__ == "__main__":
+    tweets = preprocess('gg2013.json')
+    for tweet in tweets:
+        print(tweet.text)
+        print(tweet.hashtags)
+        print(tweet.timestamp)
+        print(tweet.user)
+        print(tweet.id)
+        print("\n")
