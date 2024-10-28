@@ -8,7 +8,11 @@ from tweet import Tweet
 from ftfy import fix_text
 import unidecode
 from langdetect import detect, detect_langs
+from concurrent.futures import ProcessPoolExecutor
 
+hashtag_pattern = re.compile(r"#(\w+)")
+whitespace_pattern = re.compile(r'\s+')
+url_pattern = re.compile(r"http\S+")
 
 def english_only(data):
     '''
@@ -43,8 +47,8 @@ def extract_hashtags(data):
     hastags: #abc or @abc
     """
     text = data["text"]
-    hashtags = re.findall(r"#(\w+)", text)
-    text = re.sub(r"#(\w+)", "", text).strip()
+    hashtags = re.findall(hashtag_pattern, text)
+    text = re.sub(whitespace_pattern, "", text).strip()
     data["text"] = text
     data["hashtags"] = hashtags
     return hashtags
@@ -75,7 +79,11 @@ def process_url(data):
     :param data: a json object representing a tweet.
     :return: cleaned tweet string.
     '''
-    pass
+    #remove urls
+    text = data["text"]
+    text = re.sub(url_pattern, "", text).strip()
+    data["text"] = text
+    return data
 
 
 def exclude_extra_whitespace(data):
@@ -84,11 +92,25 @@ def exclude_extra_whitespace(data):
     :param data: a json object representing a tweet.
     :return: cleaned tweet string.
     '''
-    fixed = re.sub(r'\s+', ' ', data)
+    fixed = re.sub(whitespace_pattern, ' ', data)
     fixed = " ".join(fixed.split())
     return fixed
 
-
+def preprocess_tweet(line):
+    substitute_scrap(line)
+    process_url(line)
+    hashtag = extract_hashtags(line)
+    en_tweet = english_only(line)
+    if en_tweet:
+        tweet = Tweet()
+        text = exclude_extra_whitespace(en_tweet["text"])
+        tweet.text = text
+        tweet.hashtags = hashtag
+        tweet.timestamp = line['timestamp_ms']
+        tweet.user = line['user']
+        tweet.id = line['id']
+        return tweet
+    return None
 
 def preprocess(file):
     '''
@@ -105,43 +127,24 @@ def preprocess(file):
         data = json.load(file)
 
     # Preprocess the data
-    count = 0
+
     tweet_list = []
-    for line in data:
-        #print(count)
-        count += 1
-        tweet = Tweet()
-        substitute_scrap(line)
-        hashtag = extract_hashtags(line)
-        en_tweet = english_only(line)
-        text = None if en_tweet is None else en_tweet["text"]
-        if text is None:
-            continue
-        #text = exclude_non_alphanumeric(text)
-        #text = process_url(text)
-        text = exclude_extra_whitespace(text)
-        tweet.text = text
-        tweet.hashtags = hashtag
-        tweet.timestamp = line['timestamp_ms']
-        tweet.user = line['user']
-        tweet.id = line['id']
-        tweet_list.append(tweet)
-        '''if count == 1:
-            print(tweet.text)
-            print(tweet.hashtags)
-            print(tweet.timestamp)
-            print(tweet.user)
-            print(tweet.id)
-            print("\n")'''
+    print("\rPreprocessing data...")
+    with ProcessPoolExecutor() as executor:
+        results = list(executor.map(preprocess_tweet, data))
+
+    tweet_list = [tweet for tweet in results if tweet is not None]
 
     return tweet_list
 
 if __name__ == "__main__":
     tweets = preprocess('gg2013.json')
-    for tweet in tweets:
+    print("\rPreprocessing complete.")
+    print(f"\rNumber of tweets: {len(tweets)}")
+    '''for tweet in tweets:
         print(tweet.text)
         print(tweet.hashtags)
         print(tweet.timestamp)
         print(tweet.user)
         print(tweet.id)
-        print("\n")
+        print("\n")'''
