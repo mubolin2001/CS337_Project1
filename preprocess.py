@@ -9,9 +9,10 @@ from ftfy import fix_text
 import unidecode
 from langdetect import detect, detect_langs
 from concurrent.futures import ProcessPoolExecutor
+import pickle
 
 hashtag_pattern = re.compile(r"#(\w+)")
-whitespace_pattern = re.compile(r'\s+')
+extrawhitespace_pattern = re.compile(r'\s+')
 url_pattern = re.compile(r"http\S+")
 
 def english_only(data):
@@ -48,7 +49,8 @@ def extract_hashtags(data):
     """
     text = data["text"]
     hashtags = re.findall(hashtag_pattern, text)
-    text = re.sub(whitespace_pattern, "", text).strip()
+    text = re.sub(hashtag_pattern, "", text).strip()
+    text = re.sub(extrawhitespace_pattern, " ", text).strip()
     data["text"] = text
     data["hashtags"] = hashtags
     return hashtags
@@ -92,7 +94,7 @@ def exclude_extra_whitespace(data):
     :param data: a json object representing a tweet.
     :return: cleaned tweet string.
     '''
-    fixed = re.sub(whitespace_pattern, ' ', data)
+    fixed = re.sub(extrawhitespace_pattern, ' ', data)
     fixed = " ".join(fixed.split())
     return fixed
 
@@ -125,6 +127,7 @@ def preprocess(file):
     # Open and load the JSON data
     with open(file_path, 'r', encoding='utf-8') as file:
         data = json.load(file)
+        #data = data[:100]
 
     # Preprocess the data
 
@@ -141,10 +144,4 @@ if __name__ == "__main__":
     tweets = preprocess('gg2013.json')
     print("\rPreprocessing complete.")
     print(f"\rNumber of tweets: {len(tweets)}")
-    '''for tweet in tweets:
-        print(tweet.text)
-        print(tweet.hashtags)
-        print(tweet.timestamp)
-        print(tweet.user)
-        print(tweet.id)
-        print("\n")'''
+    
