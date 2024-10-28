@@ -3,6 +3,10 @@ from tweet import Tweet
 import spacy
 import re
 from fuzzywuzzy import process
+import time
+# import preprocess
+import json
+from spacy.matcher import Matcher
 def extract_names(text, nlp_model): 
     """
     Extracts and prints the names (PERSON entities) found in the given text.
@@ -69,8 +73,6 @@ def find_host_candidate(tweets: list[Tweet], top_num_show = None) -> dict:
     A dictionary that ranks the possible host possible candidates from high to low based
     on appearance time.
     """
-    # Load the small English language model
-    nlp = spacy.load("en_core_web_sm")
 
     # pattern that contains the word host.
     pattern = r"\bhost(s|ed|ing)?\b"
@@ -127,9 +129,127 @@ def clean_dict_keys(input_dict):
 
     return cleaned_dict
 
+
+# print(find_host_candidate(All_Tweets, 5))
+
+ 
+import spacy
+from spacy.matcher import Matcher
+
+def find_awards(all_tweets: list) -> dict:
+    """
+    Find possible awards among all tweets.
+
+    Parameters:
+        all_tweets (list): The dataset of all the tweets.
+    
+    Returns:
+        dict: A dictionary of detected awards and their counts.
+    """
+    nlp = spacy.load("en_core_web_sm")
+
+    # Initialize the Matcher
+    matcher = Matcher(nlp.vocab)
+
+    # Define award patterns
+    award_patterns = [
+        # Pattern: "Best" + optional category + optional hyphen + medium/genre
+        [
+            { "IS_TITLE": True, "LOWER": "best"},
+            {"IS_TITLE": True, "POS": "PROPN", "OP": "+"},  
+            {"TEXT": "-", "OP": "?"},  # Optional hyphen
+            {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"},
+             {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"},
+            {"LOWER": "or", "OP": "?"},
+            {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"}
+        ],
+        # Pattern: "Best Performance by Actor/Actress" + "in a ..."
+        [
+            {"IS_TITLE": True, "LOWER": "best"},
+            {"IS_TITLE": True,"LOWER": "performance"},
+            {"LOWER": "by"},
+            {"LOWER": {"IN": ["a", "an"]}, "OP": "?"},
+            {"IS_TITLE": True,"LOWER": {"IN": ["actor", "actress"]}},
+            {"LOWER": "in"},
+            {"LOWER": "a"},
+            {"POS": {"IN": ["PROPN", "VERB", "NOUN"]}, "OP": "+"},  #in a + " VERB" + "PREPN"
+            {"LOWER": "in", "OP": "?"},
+            {"LOWER": "a", "OP": "?"},
+            {"POS": {"IN": ["PROPN", "VERB", "NOUN"]}, "OP": "?"},
+            {"POS": {"IN": ["PROPN", "VERB", "NOUN"]}, "OP": "?"},
+            {"TEXT": "-", "OP": "?"},  # Optional hyphen
+            {"POS": "PROPN", "OP": "?"}, 
+             {"LOWER": "or", "OP": "?"},
+             {"POS": "PROPN", "OP": "?"}
+        ],
+    ]
+
+    # Add the patterns to the matcher
+    matcher.add("AWARD", award_patterns)
+
+    # Store detected awards in a dictionary
+    detected_awards = {}
+
+    # Use nlp.pipe() for faster batch processing
+    for doc in nlp.pipe((tweet.text for tweet in all_tweets), batch_size=50):
+        matches = matcher(doc)
+
+        # Convert matches to spans
+        spans = [doc[start:end] for match_id, start, end in matches]
+
+        # Filter to keep only the longest non-overlapping matches
+        filtered_spans = filter_longest_spans(spans)
+
+        # Store the matches in the dictionary
+        for span in filtered_spans:
+            award = span.text
+            if award in detected_awards:
+                detected_awards[award] += 1
+            else:
+                detected_awards[award] = 1
+            
+            
+
+    sorted_detected_awards = sorted(detected_awards.items(), key = lambda item: item[1], reverse=True)
+
+    return sorted_detected_awards
+
+def filter_longest_spans(spans):
+    """Filter overlapping spans to keep only the longest ones."""
+    # Sort spans by start index, and if equal, by end index descending
+    sorted_spans = sorted(spans, key=lambda span: (span.start, -span.end))
+    longest_spans = []
+    last_end = -1
+
+    for span in sorted_spans:
+        if span.start >= last_end:
+            longest_spans.append(span)
+            last_end = span.end
+
+    return longest_spans
+print()
 All_Tweets = load_data("gg2013.json")
-print(find_host_candidate(All_Tweets, 5))
-
-
-
+def test_dependency(text):
+    random_tweet = Tweet()
+    random_tweet.text = text
+    nlp = spacy.load("en_core_web_sm")
+    doc = nlp(text)
+    for token in doc:
+        print(f"Word: {token.text}, POS: {token.pos_}, Tag: {token.tag_}")
+    print([(ent.text, ent.label_)for ent in doc.ents])
+    rewards = []
+    rewards.append(random_tweet)
+    print(find_awards(rewards))
+# test_dependency(
+    
+# )
+time1 = time.time()
+print(find_awards(All_Tweets))
+time2 = time.time()
+print(time2 - time1, "s")
+# with open("gg2013answers.json", "r") as file:
+#     data = json.load(file)
+#     for award in data['award_data']:
+#         print(award)
+#         print()
     
