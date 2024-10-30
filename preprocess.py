@@ -10,10 +10,12 @@ import unidecode
 from langdetect import detect, detect_langs
 from concurrent.futures import ProcessPoolExecutor
 import pickle
+import os
 
 hashtag_pattern = re.compile(r"#(\w+)")
 extrawhitespace_pattern = re.compile(r'\s+')
 url_pattern = re.compile(r"http\S+")
+CACHE_FILE = "cache.pkl"
 
 def english_only(data):
     '''
@@ -36,8 +38,6 @@ def english_only(data):
     except:
         return None
 
-
-
 def extract_hashtags(data):
     '''
     Given a dataset of tweet data, extract all hashtags from the tweets.
@@ -49,11 +49,10 @@ def extract_hashtags(data):
     """
     text = data["text"]
     hashtags = re.findall(hashtag_pattern, text)
-    # text = re.sub(whitespace_pattern, "", text).strip()
+    text = re.sub(extrawhitespace_pattern, " ", text).strip()
     data["text"] = text
     data["hashtags"] = hashtags
     return hashtags
-
 
 def substitute_scrap(data):
     '''
@@ -71,8 +70,11 @@ def exclude_non_alphanumeric(data):
     :param data: a json object representing a tweet.
     :return: cleaned tweet string.
     '''
-    pass
-
+    text = data["text"]
+    text = unidecode.unidecode(text)
+    text = re.sub(r'\W+', ' ', text)
+    data["text"] = text
+    return data
 
 def process_url(data):
     '''
@@ -85,7 +87,6 @@ def process_url(data):
     text = re.sub(url_pattern, "", text).strip()
     data["text"] = text
     return data
-
 
 def exclude_extra_whitespace(data):
     '''
@@ -104,8 +105,8 @@ def preprocess_tweet(line):
     en_tweet = english_only(line)
     if en_tweet:
         tweet = Tweet()
-        # text = exclude_extra_whitespace(en_tweet["text"])
-        tweet.text = en_tweet["text"]
+        text = exclude_extra_whitespace(en_tweet["text"])
+        tweet.text = text
         tweet.hashtags = hashtag
         tweet.timestamp = line['timestamp_ms']
         tweet.user = line['user']
@@ -120,6 +121,12 @@ def preprocess(file):
     :param file: path of dataset with tweet data.
     :return: list of preprocessed tweets.
     '''
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, 'rb') as file:
+            print("\rLoading cached data...")
+            tweet_list = pickle.load(file)
+        return tweet_list
+
     # Specify the path to your JSON file
     file_path = file
 
@@ -127,9 +134,7 @@ def preprocess(file):
     with open(file_path, 'r', encoding='utf-8') as file:
         data = json.load(file)
     
-
     # Preprocess the data
-
     tweet_list = []
     print("\rPreprocessing data...")
     with ProcessPoolExecutor() as executor:
@@ -137,16 +142,16 @@ def preprocess(file):
 
     tweet_list = [tweet for tweet in results if tweet is not None]
 
+    with open(CACHE_FILE, 'wb') as cache:
+        pickle.dump(tweet_list, cache)
+        print("\rTweets saved to cache.")
+
     return tweet_list
 
 if __name__ == "__main__":
     tweets = preprocess('gg2013.json')
     print("\rPreprocessing complete.")
     print(f"\rNumber of tweets: {len(tweets)}")
-    for tweet in tweets:
-        print(tweet.text)
-        print(tweet.hashtags)
-        print(tweet.timestamp)
-        print(tweet.user)
-        print(tweet.id)
-        print("\n")
+    
+    for i in range(50):
+        print(f'{i}-{tweets[i]}')
