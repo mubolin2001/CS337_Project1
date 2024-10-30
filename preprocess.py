@@ -9,9 +9,10 @@ from ftfy import fix_text
 import unidecode
 from langdetect import detect, detect_langs
 from concurrent.futures import ProcessPoolExecutor
+import pickle
 
 hashtag_pattern = re.compile(r"#(\w+)")
-whitespace_pattern = re.compile(r'\s+')
+extrawhitespace_pattern = re.compile(r'\s+')
 url_pattern = re.compile(r"http\S+")
 
 def english_only(data):
@@ -92,7 +93,7 @@ def exclude_extra_whitespace(data):
     :param data: a json object representing a tweet.
     :return: cleaned tweet string.
     '''
-    fixed = re.sub(whitespace_pattern, ' ', data)
+    fixed = re.sub(extrawhitespace_pattern, ' ', data)
     fixed = " ".join(fixed.split())
     return fixed
 
