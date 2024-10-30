@@ -4,7 +4,7 @@ import spacy
 import re
 from fuzzywuzzy import process
 import time
-# import preprocess
+import preprocess
 import json
 from spacy.matcher import Matcher
 def extract_names(text, nlp_model): 
@@ -132,10 +132,6 @@ def clean_dict_keys(input_dict):
 
 # print(find_host_candidate(All_Tweets, 5))
 
- 
-import spacy
-from spacy.matcher import Matcher
-
 def find_awards(all_tweets: list) -> dict:
     """
     Find possible awards among all tweets.
@@ -211,8 +207,10 @@ def find_awards(all_tweets: list) -> dict:
             
 
     sorted_detected_awards = sorted(detected_awards.items(), key = lambda item: item[1], reverse=True)
+    #eliminate unnecessary things
+    filtered_data = [tup for tup in sorted_detected_awards if len(tup[0].split()) >= 4]
 
-    return sorted_detected_awards
+    return filtered_data
 
 def filter_longest_spans(spans):
     """Filter overlapping spans to keep only the longest ones."""
@@ -227,8 +225,6 @@ def filter_longest_spans(spans):
             last_end = span.end
 
     return longest_spans
-print()
-All_Tweets = load_data("gg2013.json")
 def test_dependency(text):
     random_tweet = Tweet()
     random_tweet.text = text
@@ -243,10 +239,13 @@ def test_dependency(text):
 # test_dependency(
     
 # )
-time1 = time.time()
-print(find_awards(All_Tweets))
-time2 = time.time()
-print(time2 - time1, "s")
+if __name__ == "__main__":
+    time1 = time.time()
+    All_Tweets = preprocess.preprocess("gg2013.json")
+    print(find_awards(All_Tweets))
+    # test_dependency("Coming up next...Robert Downey Jr. presents the Cecil B. DeMille Award to the MILFtastic (and I mean it) Jodie Foster #goldenglobes")
+    time2 = time.time()
+    print(time2 - time1, "s")
 # with open("gg2013answers.json", "r") as file:
 #     data = json.load(file)
 #     for award in data['award_data']:

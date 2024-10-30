@@ -48,7 +48,7 @@ def extract_hashtags(data):
     """
     text = data["text"]
     hashtags = re.findall(hashtag_pattern, text)
-    text = re.sub(whitespace_pattern, "", text).strip()
+    # text = re.sub(whitespace_pattern, "", text).strip()
     data["text"] = text
     data["hashtags"] = hashtags
     return hashtags
@@ -103,8 +103,8 @@ def preprocess_tweet(line):
     en_tweet = english_only(line)
     if en_tweet:
         tweet = Tweet()
-        text = exclude_extra_whitespace(en_tweet["text"])
-        tweet.text = text
+        # text = exclude_extra_whitespace(en_tweet["text"])
+        tweet.text = en_tweet["text"]
         tweet.hashtags = hashtag
         tweet.timestamp = line['timestamp_ms']
         tweet.user = line['user']
@@ -125,6 +125,7 @@ def preprocess(file):
     # Open and load the JSON data
     with open(file_path, 'r', encoding='utf-8') as file:
         data = json.load(file)
+    
 
     # Preprocess the data
 
@@ -141,10 +142,10 @@ if __name__ == "__main__":
     tweets = preprocess('gg2013.json')
     print("\rPreprocessing complete.")
     print(f"\rNumber of tweets: {len(tweets)}")
-    '''for tweet in tweets:
+    for tweet in tweets:
         print(tweet.text)
         print(tweet.hashtags)
         print(tweet.timestamp)
         print(tweet.user)
         print(tweet.id)
-        print("\n")'''
+        print("\n")
