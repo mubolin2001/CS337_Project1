@@ -1,6 +1,6 @@
 import json
 import re
-from preprocess import preprocess
+from preprocess import load_tweets
 
 def official_account(data):
     '''
@@ -9,7 +9,7 @@ def official_account(data):
     :param data: a json file containing all tweets.
     :return: a tuple (trimmed text, official accounts)
     '''
-    tweets = preprocess(data)
+    tweets = load_tweets(data)
     res = []
     for tweet in tweets:
         username = tweet.user['screen_name']
@@ -23,4 +23,5 @@ def official_account(data):
 
 if __name__ == "__main__":
     data = 'gg2013.json'
-    print(official_account(data))
+    for i in official_account(data):
+        print(i)

@@ -1,0 +1,10 @@
+nltk
+spacy
+ftfy
+numpy==1.26.4
+langdetect
+IMDbPY
+pandas
+unidecode
+wordninja
+rapidfuzz

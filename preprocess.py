@@ -5,19 +5,14 @@ Preprocess each tweet in the dataset. Store the preprocessed tweets in a list.
 import re
 import json
 import ftfy
+import nltk
 from langdetect import detect, LangDetectException
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
 from tweet import Tweet
 
-# def english_only(text):
-#     '''
-#     Given a dataset of tweet data, remove all non-English tweets.
-#     Use langdetect to detect the language of the tweet.
-#     :param text: string representing a tweet message.
-#     :return: cleaned tweet string.
-#     '''
-#     detected = detect(text)
-#     if detected == 'en':
-#         return text
 
 def is_English(text):
     '''
@@ -53,23 +48,14 @@ def substitute_scrap(data):
     return fixed
 
 
-def exclude_non_alphanumeric(data):
-    '''
-    Given a dataset of tweet data, exclude all non-alphanumeric characters.
-    Use unidecode to remove all unicode characters to ASCII.
-    :param data: a json object representing a tweet.
-    :return: cleaned tweet string.
-    '''
-    return data
-
-
-def process_url(data):
-    '''
-    Given a dataset of tweet data, process all URLs.
-    :param data: a json object representing a tweet.
-    :return: cleaned tweet string.
-    '''
-    pass
+def tokenize(tweet):
+    """
+    Given a tweet, tokenize the tweet into words.
+    """
+    nltk.download('punkt_tab')
+    tokens = word_tokenize(tweet.lower())
+    tokens = [word for word in tokens if word.isalnum() and word not in stopwords.words('english')]
+    return tokens
 
 
 def exclude_extra_whitespace(data):
@@ -84,7 +70,7 @@ def exclude_extra_whitespace(data):
 
 
 
-def preprocess(file):
+def load_tweets(file):
     '''
     Given a dataset of tweet data, preprocess the data. Facilitate the functions above
     to complete the task.
@@ -103,13 +89,10 @@ def preprocess(file):
     for line in data:
         tweet = Tweet()
         text = line['text']
-        # if not is_English(text):
-        #     continue
         text, hashtags = extract_hashtags(text)
         text = substitute_scrap(text)
-        # text = exclude_non_alphanumeric(text)
-        # # text = process_url(text)
-        # text = exclude_extra_whitespace(text)
+
+        # Create a Tweet object, append to the list
         tweet.text = text
         tweet.hashtags = hashtags
         tweet.timestamp = line['timestamp_ms']
@@ -119,3 +102,7 @@ def preprocess(file):
 
     return tweet_list
 
+
+# if __name__ == "__main__":
+#     line = "Ben Affleck wins the award for Best Director - Motion Picture for Argo. #GoldenGlobes"
+#     print(tokenize(line))
