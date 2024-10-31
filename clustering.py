@@ -4,6 +4,35 @@ from tweet import Tweet
 import pickle
 import os
 import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+import numpy as np
+
+def cluster_tweets_kmeans(tweets, k):
+    """
+    Clusters tweets using K-means based on their timestamps.
+
+    Parameters:
+        tweets (list): A list of Tweet objects, sorted by timestamp.
+        k (int): The number of clusters.
+
+    Returns:
+        dict: A dictionary with cluster labels as keys and lists of tweets as values.
+    """
+    # Convert tweet timestamps to a numerical format (seconds since epoch)
+    timestamps = np.array([tweet.timestamp for tweet in tweets]).reshape(-1, 1)
+
+    # Apply K-means clustering
+    kmeans = KMeans(n_clusters=k, random_state=0)
+    kmeans.fit(timestamps)
+
+    # Create a dictionary to store clusters
+    clusters = {i: [] for i in range(k)}
+
+    # Assign tweets to their corresponding cluster
+    for i, label in enumerate(kmeans.labels_):
+        clusters[label].append(tweets[i])
+
+    return clusters
 
 def cluster_by_timestamp(tweets, time_interval='hour'):
     """
@@ -64,6 +93,10 @@ if __name__ == "__main__":
                         clustered_tweets = cluster_by_timestamp(tweets, time_interval='hour')
                         print(f'number of clusters: {len(clustered_tweets)}')
                         visualize(clustered_tweets)
+
+                        clustered_tweets_kmeans = cluster_tweets_kmeans(tweets, k=32)
+                        print(f'number of clusters: {len(clustered_tweets_kmeans)}')
+                        visualize(clustered_tweets_kmeans)
                         
 
         

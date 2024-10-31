@@ -98,10 +98,23 @@ def exclude_extra_whitespace(data):
     fixed = " ".join(fixed.split())
     return fixed
 
+def remove_retweets(data):
+    '''
+    Given a dataset of tweet data, remove all retweets.
+    :param data: a json object representing a tweet.
+    :return: cleaned tweet string.
+    '''
+    if data["text"].startswith("RT"):
+        return None
+    return data
+
 def preprocess_tweet(line):
     substitute_scrap(line)
     process_url(line)
     hashtag = extract_hashtags(line)
+    line = remove_retweets(line)
+    if line is None:
+        return None
     en_tweet = english_only(line)
     if en_tweet:
         tweet = Tweet()
@@ -124,6 +137,8 @@ def preprocess(file):
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, 'rb') as file:
             print("\rLoading cached data...")
+            print("\rSkipping preprocessing...")
+            print(f"\rNumber of tweets: {len(tweet_list)}")
             tweet_list = pickle.load(file)
         return tweet_list
 
@@ -142,10 +157,15 @@ def preprocess(file):
 
     tweet_list = [tweet for tweet in results if tweet is not None]
 
+    # sort tweets by timestamp
+    tweet_list.sort(key=lambda x: x.timestamp)
+
     with open(CACHE_FILE, 'wb') as cache:
         pickle.dump(tweet_list, cache)
         print("\rTweets saved to cache.")
-
+    
+    print("\rPreprocessing complete.")
+    print(f"\rNumber of tweets: {len(tweet_list)}")
     return tweet_list
 
 if __name__ == "__main__":

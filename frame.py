@@ -9,6 +9,13 @@ import json
 from collections import defaultdict
 from spacy.matcher import Matcher
 from imdb import Cinemagoer
+from concurrent.futures import ProcessPoolExecutor
+from clustering import cluster_by_timestamp, cluster_tweets_kmeans
+from datetime import datetime
+from bisect import bisect_left, bisect_right
+import os
+
+# Load the spaCy model outside of the function if possible
 def extract_names(text, nlp_model): 
     """
     Extracts and prints the names (PERSON entities) found in the given text.
@@ -144,43 +151,42 @@ def find_awards(all_tweets: list) -> dict:
     Returns:
         dict: A dictionary of detected awards and their counts.
     """
-    # Load the spaCy model outside of the function if possible
     nlp = spacy.load("en_core_web_sm")
 
     # Initialize the Matcher
     matcher = Matcher(nlp.vocab)
-
     # Define award patterns
     award_patterns = [
-        [
-            { "IS_TITLE": True, "LOWER": "best"},
-            {"IS_TITLE": True, "POS": "PROPN", "OP": "+"},
-            {"TEXT": "-", "OP": "?"},
-            {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"},
-            {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"},
-            {"LOWER": "or", "OP": "?"},
-            {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"}
-        ],
-        [
-            {"IS_TITLE": True, "LOWER": "best"},
-            {"IS_TITLE": True, "LOWER": "performance"},
-            {"LOWER": "by"},
-            {"LOWER": {"IN": ["a", "an"]}, "OP": "?"},
-            {"IS_TITLE": True, "LOWER": {"IN": ["actor", "actress"]}},
-            {"LOWER": "in"},
-            {"LOWER": "a"},
-            {"POS": {"IN": ["PROPN", "VERB", "NOUN"]}, "OP": "+"},
-        ],
+    [
+        {"IS_TITLE": True, "LOWER": "best"},
+        {"IS_TITLE": True, "POS": "PROPN"},
+        {"TEXT": "-", "OP": "?"},
+        {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"}
+    ],
+    [
+        {"IS_TITLE": True, "LOWER": "best"},
+        {"IS_TITLE": True, "LOWER": "performance"},
+        {"LOWER": "by"},
+        {"IS_TITLE": True, "LOWER": {"IN": ["actor", "actress"]}},
+        {"LOWER": "in"},
+        {"POS": {"IN": ["PROPN", "VERB", "NOUN"]}, "OP": "+"}
     ]
+]
 
     # Add the patterns to the matcher
     matcher.add("AWARD", award_patterns)
 
     # Use defaultdict to store awards and winners for better performance
-    detected_awards = defaultdict(lambda: {"count": 0, "winners": defaultdict(int)})
+    detected_awards = defaultdict(lambda: {
+        "count": 0,
+        "winners": defaultdict(int),
+        "start_timestamp": None,
+        "end_timestamp": None
+    })
 
     # Use nlp.pipe() for faster batch processing
-    for doc in nlp.pipe((tweet.text for tweet in all_tweets), batch_size=50):
+    for tweet in all_tweets:
+        doc = nlp(tweet.text)
         matches = matcher(doc)
         
         # Extract possible winners only once per tweet
@@ -193,27 +199,43 @@ def find_awards(all_tweets: list) -> dict:
         for span in filtered_spans:
             award = span.text.strip()
             if len(award.split(" ")) > 3:
-                detected_awards[award]["count"] += 1
+                award_data = detected_awards[award]
                 
+                # Update count
+                award_data["count"] += 1
+
+                # Update timestamps
+                if not award_data["start_timestamp"] or tweet.timestamp < award_data["start_timestamp"]:
+                    award_data["start_timestamp"] = tweet.timestamp
+                if not award_data["end_timestamp"] or tweet.timestamp > award_data["end_timestamp"]:
+                    award_data["end_timestamp"] = tweet.timestamp
+
+                # Filter winners to avoid single-word names
                 possible_winners_filter = [winner for winner in possible_winners if len(winner.split(" ")) > 1]
                 
                 if possible_winners_filter:
                     for winner in possible_winners_filter:
-                        detected_awards[award]["winners"][winner] += 1
+                        award_data["winners"][winner] += 1
                 else:
                     # If no valid person names found, try to identify movies
                     possible_movie = find_movie_from_text(award)
                     if possible_movie:
-                        detected_awards[award]["winners"][possible_movie] += 1
+                        award_data["winners"][possible_movie] += 1
 
     # Sort detected awards by count
     sorted_detected_awards = sorted(detected_awards.items(), key=lambda item: item[1]["count"], reverse=True)
-    # Convert to regular dict
-    sorted_detected_awards = dict(sorted_detected_awards)
-
-    # Clean award names and winner names
-    for award, data in sorted_detected_awards.items():
-        data["winners"] = clean_dict_keys(data["winners"])
+    # discard awards with count less than 2
+    sorted_detected_awards = [award for award in sorted_detected_awards if award[1]["count"] > 1]
+    # Convert to regular dict and format timestamps as readable dates
+    sorted_detected_awards = {
+        award: {
+            **data,
+            "start_timestamp": data["start_timestamp"] ,
+            "end_timestamp": data["end_timestamp"],
+            "winners": clean_dict_keys(data["winners"])
+        }
+        for award, data in sorted_detected_awards
+    }
 
     return sorted_detected_awards
 
@@ -286,16 +308,231 @@ def is_movie(title, imdb):
     
     return False
 
+def find_nominees(tweets, detected_awards):
+    """
+    Map nominees to their respective awards.
+
+    Parameters:
+        tweets (list): List of tweet objects.
+        detected_awards (dict): dictionary of detected awards and their counts and winners.
+        
+    Returns:
+        dict: A dictionary with awards as keys and lists of nominees as values.
+    """
+    nlp = spacy.load("en_core_web_sm")
+    matcher = Matcher(nlp.vocab)
+    
+    # Patterns to capture nominee phrases
+    nominee_patterns = [
+        [{"IS_TITLE": True}, {"LOWER": "nominated"}, {"LOWER": "for"}, {"IS_TITLE": True, "OP": "+"}],   # "X nominated for Y"
+        [{"IS_TITLE": True}, {"LOWER": "nominee"}, {"IS_PUNCT": True, "OP": "?"}, {"IS_TITLE": True, "OP": "+"}],  # "X nominee: Y"
+        [{"IS_TITLE": True, "OP": "+"}, {"LOWER": "up"}, {"LOWER": "for"}, {"IS_TITLE": True, "OP": "+"}],  # "X up for Y"
+    ]
+
+    matcher.add("NOMINEE_AWARD", nominee_patterns)
+
+    # Initialize a dictionary to store award-nominee mappings
+    award_nominee_map = {award: [] for award in detected_awards.keys()}
+    for award in detected_awards.keys():
+        winners = detected_awards[award]["winners"]
+        if winners:
+            for winner in winners.keys():
+                award_nominee_map[award].append(winner)
+
+    # Process each tweet to find nominee-award relationships
+    for award in detected_awards.keys():
+        # filter tweets by timestamp, assuming tweets were already sorted by timestamp
+        filtered_tweets = filter_tweets_by_timestamp(tweets, detected_awards[award]["start_timestamp"], detected_awards[award]["end_timestamp"])
+        for tweet in filtered_tweets:
+            doc = nlp(tweet.text)
+            matches = matcher(doc)
+            
+            for match_id, start, end in matches:
+                span = doc[start:end]
+                nominee_text = None
+                award_text = None
+                
+                # Extract entities within a reasonable distance from the pattern span
+                for token in span:
+                    # Search for a nominee entity (typically a person or film title)
+                    if token.ent_type_ in {"PERSON", "ORG", "WORK_OF_ART"}:
+                        nominee_text = token.text
+                        
+                    # Match award names using detected award list
+                    for award in detected_awards.keys():
+                        if award.lower() in tweet.text.lower():
+                            award_text = award
+                            break
+                    
+                # If both nominee and award are found, add nominee to award_nominee_map
+                if nominee_text and award_text:
+                    award_nominee_map[award_text].append(nominee_text)
+                
+
+
+    # Remove duplicates and return the map
+    for award in award_nominee_map:
+        award_nominee_map[award] = list(set(award_nominee_map[award]))  # Eliminate duplicates
+
+    return award_nominee_map
+
+def find_presenters(tweets, detected_awards):
+    """
+    Map presenters to their respective awards.
+
+    Parameters:
+        tweets (list): List of tweet objects.
+        detected_awards (list): List of detected award names.
+        
+    Returns:
+        dict: A dictionary with presenters as keys and lists of awards as values.
+    """
+    nlp = spacy.load("en_core_web_sm")
+    matcher = Matcher(nlp.vocab)
+    
+    # Patterns to capture presenter phrases
+    presenter_patterns = [
+        [{"IS_TITLE": True}, {"LOWER": "presents"}, {"IS_TITLE": True, "OP": "+"}],   # "X presents Y"
+        [{"IS_TITLE": True}, {"LOWER": "announces"}, {"IS_TITLE": True, "OP": "+"}],  # "X announces Y"
+        [{"IS_TITLE": True}, {"LOWER": "to"}, {"LOWER": "present"}, {"IS_TITLE": True, "OP": "+"}],  # "X to present Y"
+    ]
+
+    matcher.add("PRESENTER_AWARD", presenter_patterns)
+
+    # Initialize a dictionary to store presenter-award mappings
+    award_presenter_map = {}
+
+    # Process each tweet to find presenter-award relationships
+    for award in detected_awards:
+        # filter tweets by timestamp, assuming tweets were already sorted by timestamp
+        filtered_tweets = filter_tweets_by_timestamp(tweets, detected_awards[award]["start_timestamp"], detected_awards[award]["end_timestamp"])
+        for tweet in filtered_tweets:
+            doc = nlp(tweet.text)
+            matches = matcher(doc)
+            
+            for match_id, start, end in matches:
+                span = doc[start:end]
+                presenter_text = None
+                award_text = None
+                
+                # Extract entities within a reasonable distance from the pattern span
+                for token in span:
+                    # Search for a presenter entity (typically a person)
+                    if token.ent_type_ == "PERSON":
+                        presenter_text = token.text
+                        
+                    # Match award names using detected award list
+                    for award in detected_awards:
+                        if award.lower() in tweet.text.lower():
+                            award_text = award
+                            break
+                
+                # If both presenter and award are found, add presenter to award_presenter_map
+                if presenter_text and award_text:
+                    if presenter_text not in award_presenter_map:
+                        award_presenter_map[presenter_text] = []
+                    award_presenter_map[presenter_text].append(award_text)
+
+    # Remove duplicates from award lists
+    for presenter in award_presenter_map:
+        award_presenter_map[presenter] = list(set(award_presenter_map[presenter]))  # Eliminate duplicates
+
+    return award_presenter_map
+
+def filter_tweets_by_timestamp(tweets, start_timestamp, end_timestamp):
+    """
+    Filter tweets based on a timestamp range using binary search for efficiency.
+
+    Parameters:
+        tweets (list): A list of Tweet objects sorted by timestamp.
+        start_timestamp (int): The start timestamp of the range.
+        end_timestamp (int): The end timestamp of the range.
+
+    Returns:
+        list: A list of tweets within the specified timestamp range.
+    """
+    # Extract the list of timestamps
+    timestamps = [tweet.timestamp for tweet in tweets]
+
+    # Use binary search to find the range indices
+    start_index = bisect_left(timestamps, start_timestamp)
+    end_index = bisect_right(timestamps, end_timestamp)
+
+    # Slice the tweets list to get only those within the range
+    return tweets[start_index:end_index]
+
+def process_cluster(timestamp, cluster):
+    awards = find_awards(cluster)
+    nominees = find_nominees(cluster, awards)
+    presenters = find_presenters(cluster, awards)
+    return timestamp, awards, nominees, presenters
+
+def get_winner(award):
+    winners = award["winners"]
+    if winners:
+        return max(winners, key=winners.get)
+    return None
+
+def print_result(host_candidates, awards, nominees, presenters):
+    # choose the top 3 host candidates
+    print("Hosts: ", list(host_candidates.keys())[:3])
+    
+    for awardname, award in awards.items():
+        print(f'Award: {awardname}')
+        print("Presenters: ", presenters[awardname] if awardname in presenters else None)
+        print("Nominees: ", nominees[awardname] if awardname in nominees else None)
+        print("Winner: ", get_winner(award))
+        print("\n")
+    
+def save_json(host_candidates, awards, nominees, presenters, filename):
+    # remove file if it already exists
+    if os.path.exists(filename):
+        os.remove(filename)
+
+    with open(filename, "w") as file:
+        json.dump({
+            "Hosts": list(host_candidates.keys())[:3],
+            "Award data":[
+                {
+                    "Award": awardname,
+                    "Presenters": presenters[awardname] if awardname in presenters else None,
+                    "Nominees": nominees[awardname] if awardname in nominees else None,
+                    "Winner": get_winner(award)
+                } for awardname, award in awards.items()
+            ]
+        }, file, indent=4)
+    print(f"Results saved to {filename}")
+
 if __name__ == "__main__":
     time1 = time.time()
     All_Tweets = preprocess.preprocess("gg2013.json")
-   
-    print(find_awards(All_Tweets))
+    #clustered_tweets = cluster_by_timestamp(All_Tweets)
+    print("Clustering tweets...")
+    clustered_tweets = cluster_tweets_kmeans(All_Tweets, k=32)
+
+    print("Finding host candidates...")
+    host_candidates = find_host_candidate(All_Tweets)
+
+    awards_result = {}
+    nominees_result = {}
+    presenters_result = {}
+
+    print("Processing clusters...")
+    with ProcessPoolExecutor() as executor:
+        future_results = [executor.submit(process_cluster, timestamp, cluster) for timestamp, cluster in clustered_tweets.items()]
+        for future in future_results:
+            timestamp, awards, nominees, presenters = future.result()
+            print(awards)
+            print(nominees)
+            print(presenters)
+            #merge dictionaries into results
+            awards_result.update(awards)
+            nominees_result.update(nominees)
+            presenters_result.update(presenters)
+    
+    print("Printing results...")
+    print_result(host_candidates, awards_result, nominees_result, presenters_result)
+    save_json(host_candidates, awards_result, nominees_result, presenters_result, "result.json")
     time2 = time.time()
     print(time2 - time1, "s")
-# with open("gg2013answers.json", "r") as file:
-#     data = json.load(file)
-#     for award in data['award_data']:
-#         print(award)
-#         print()
     
