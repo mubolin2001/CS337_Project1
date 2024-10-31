@@ -138,8 +138,9 @@ def preprocess(file):
         with open(CACHE_FILE, 'rb') as file:
             print("\rLoading cached data...")
             print("\rSkipping preprocessing...")
-            print(f"\rNumber of tweets: {len(tweet_list)}")
+            
             tweet_list = pickle.load(file)
+            print(f"\rNumber of tweets: {len(tweet_list)}")
         return tweet_list
 
     # Specify the path to your JSON file
