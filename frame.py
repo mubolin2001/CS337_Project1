@@ -85,6 +85,7 @@ def find_host_candidate(tweets: list[Tweet], top_num_show = None) -> dict:
 
     # pattern that contains the word host.
     pattern = r"\bhost(s|ed|ing)?\b"
+    irrelevent_words = ["host", "hosted", "hosting", "hosts", "golden globes"]
 
     # Load the small English language model
     nlp = spacy.load("en_core_web_sm")
@@ -101,6 +102,7 @@ def find_host_candidate(tweets: list[Tweet], top_num_show = None) -> dict:
                     host_candidate[name] = 1
                 else:
                     host_candidate[name] += 1
+                    
     merged_host_candidate = merge_name_counts(host_candidate)
     #add a top numbers option, which is, show only specific numbers of top possible candidate
     if top_num_show:
@@ -111,8 +113,9 @@ def find_host_candidate(tweets: list[Tweet], top_num_show = None) -> dict:
         sorted_host_candidate = clean_dict_keys(dict(
             sorted(merged_host_candidate.items(), key=lambda item: item[1], reverse=True)
             ))
-        
+    sorted_host_candidate = {k: v for k, v in sorted_host_candidate.items() if k.lower() not in irrelevent_words}
     return sorted_host_candidate
+
 def clean_key(key):
     """
     Cleans the key 's and other strange sign.
@@ -376,66 +379,55 @@ def find_nominees(tweets, detected_awards):
 
     return award_nominee_map
 
-def find_presenters(tweets, detected_awards):
+def find_presenters(tweets, detected_awards, time_window=300000):  # time_window in seconds (5 minutes default)
     """
-    Map presenters to their respective awards.
+    Map presenters to their respective awards using time windows.
 
     Parameters:
         tweets (list): List of tweet objects.
-        detected_awards (list): List of detected award names.
+        detected_awards (dict): {"award1":{'count':1, 'winners':{'Joe':1, 'Rob':3}, 'start_timestamp':12345, 'end_timestamp':6789},...}.
+        time_window (int): The time window in seconds around the award to capture nearby presenter mentions.
         
     Returns:
         dict: A dictionary with presenters as keys and lists of awards as values.
     """
     nlp = spacy.load("en_core_web_sm")
     matcher = Matcher(nlp.vocab)
-    
-    # Patterns to capture presenter phrases
     presenter_patterns = [
-        [{"IS_TITLE": True}, {"LOWER": "presents"}, {"IS_TITLE": True, "OP": "+"}],   # "X presents Y"
-        [{"IS_TITLE": True}, {"LOWER": "announces"}, {"IS_TITLE": True, "OP": "+"}],  # "X announces Y"
-        [{"IS_TITLE": True}, {"LOWER": "to"}, {"LOWER": "present"}, {"IS_TITLE": True, "OP": "+"}],  # "X to present Y"
+        [{"IS_TITLE": True}, {"LOWER": "presents"}, {"IS_TITLE": True, "OP": "+"}],
+        [{"IS_TITLE": True}, {"LOWER": "announces"}, {"IS_TITLE": True, "OP": "+"}],
+        [{"IS_TITLE": True}, {"LOWER": "to"}, {"LOWER": "present"}, {"IS_TITLE": True, "OP": "+"}],
     ]
+    matcher.add("PRESENTER", presenter_patterns)
 
-    matcher.add("PRESENTER_AWARD", presenter_patterns)
+    # Initialize dictionary to store presenter-award mappings
+    award_presenter_map = {award: [] for award in detected_awards.keys()}
 
-    # Initialize a dictionary to store presenter-award mappings
-    award_presenter_map = {}
-
-    # Process each tweet to find presenter-award relationships
-    for award in detected_awards:
-        # filter tweets by timestamp, assuming tweets were already sorted by timestamp
-        filtered_tweets = filter_tweets_by_timestamp(tweets, detected_awards[award]["start_timestamp"], detected_awards[award]["end_timestamp"])
+    # For each award, find potential presenters in the defined time window
+    for award, award_info in detected_awards.items():
+        start_time = award_info["start_timestamp"] - time_window
+        end_time = award_info["end_timestamp"] + time_window
+        
+        # Filter tweets by timestamp within the time window
+        filtered_tweets = filter_tweets_by_timestamp(tweets, start_time, end_time)
+        
         for tweet in filtered_tweets:
             doc = nlp(tweet.text)
             matches = matcher(doc)
-            
+
             for match_id, start, end in matches:
                 span = doc[start:end]
-                presenter_text = None
-                award_text = None
                 
-                # Extract entities within a reasonable distance from the pattern span
-                for token in span:
-                    # Search for a presenter entity (typically a person)
-                    if token.ent_type_ == "PERSON":
-                        presenter_text = token.text
-                        
-                    # Match award names using detected award list
-                    for award in detected_awards:
-                        if award.lower() in tweet.text.lower():
-                            award_text = award
-                            break
-                
-                # If both presenter and award are found, add presenter to award_presenter_map
-                if presenter_text and award_text:
-                    if presenter_text not in award_presenter_map:
-                        award_presenter_map[presenter_text] = []
-                    award_presenter_map[presenter_text].append(award_text)
+                # Extract possible presenter names (typically entities labeled as "PERSON")
+                presenter_names = [ent.text for ent in doc.ents if ent.label_ == "PERSON"]
 
-    # Remove duplicates from award lists
-    for presenter in award_presenter_map:
-        award_presenter_map[presenter] = list(set(award_presenter_map[presenter]))  # Eliminate duplicates
+                # Map presenters to the current award
+                for presenter in presenter_names:
+                    award_presenter_map[award].append(presenter)
+
+    # Remove duplicates in award lists for each presenter
+    for award in award_presenter_map:
+        award_presenter_map[award] = list(set(award_presenter_map[award]))
 
     return award_presenter_map
 
@@ -512,7 +504,7 @@ if __name__ == "__main__":
 
     print("Finding host candidates...")
     host_candidates = find_host_candidate(All_Tweets)
-
+    print("Host candidates: ", host_candidates)
     awards_result = {}
     nominees_result = {}
     presenters_result = {}

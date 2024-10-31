@@ -48,3 +48,4 @@ ftfy~=6.3.0
 langdetect~=1.0.9
 matplotlib~=3.9.2
 IMDbPY~=2022.7.9
+scikit-learn~=1.5.2
