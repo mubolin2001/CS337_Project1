@@ -7,6 +7,7 @@ import time
 import preprocess
 import json
 from spacy.matcher import Matcher
+from imdb import IMDb
 def extract_names(text, nlp_model): 
     """
     Extracts and prints the names (PERSON entities) found in the given text.
@@ -189,7 +190,7 @@ def find_awards(all_tweets: list) -> dict:
     # Use nlp.pipe() for faster batch processing
     for doc in nlp.pipe((tweet.text for tweet in all_tweets), batch_size=50):
         matches = matcher(doc)
-
+        possible_winners = extract_names(doc, nlp)
         # Convert matches to spans
         spans = [doc[start:end] for match_id, start, end in matches]
 
@@ -197,20 +198,41 @@ def find_awards(all_tweets: list) -> dict:
         filtered_spans = filter_longest_spans(spans)
 
         # Store the matches in the dictionary
+        possible_winners = extract_names(doc.text, nlp)
         for span in filtered_spans:
             award = span.text
-            if award in detected_awards:
-                detected_awards[award] += 1
-            else:
-                detected_awards[award] = 1
+            if len(award.split(" ")) > 3:
+                if award not in detected_awards:
+                    detected_awards[award] = {"count": 1, "winners": {}}
+                else:
+                    detected_awards[award]["count"] += 1
+            
+            possible_winners_filter = [winner for winner in possible_winners if len(winner.split(" ") > 2)]
+            #if it can find a person winner
+            if possible_winners_filter:
+                for winner in possible_winners_filter:
+                    if len(winner.split(" ")) > 1:
+                        if winner in detected_awards[award]["winners"]:
+                            detected_awards[award]["winners"][winner] += 1
+                        else:
+                            detected_awards[award]["winners"][winner] = 1
+            
+
+
+
             
             
 
-    sorted_detected_awards = sorted(detected_awards.items(), key = lambda item: item[1], reverse=True)
+    sorted_detected_awards = sorted(detected_awards.items(), key = lambda item: item[1]["count"], reverse=True)
     #eliminate unnecessary things
-    filtered_data = [tup for tup in sorted_detected_awards if len(tup[0].split()) >= 4]
+    sorted_detected_awards = {
+        k: v for k, v in sorted(detected_awards.items(), key=lambda item: item[1]["count"], reverse=True)
+    }
 
-    return filtered_data
+    # Clean award names and winner names
+    for award, data in sorted_detected_awards.items():
+        data["winners"] = clean_dict_keys(data["winners"])
+    return sorted_detected_awards
 
 def filter_longest_spans(spans):
     """Filter overlapping spans to keep only the longest ones."""
@@ -226,24 +248,44 @@ def filter_longest_spans(spans):
 
     return longest_spans
 def test_dependency(text):
+    ia = IMDb()
     random_tweet = Tweet()
     random_tweet.text = text
     nlp = spacy.load("en_core_web_sm")
     doc = nlp(text)
     for token in doc:
         print(f"Word: {token.text}, POS: {token.pos_}, Tag: {token.tag_}")
+        if is_movie(token.text, ia):
+            print(token.text, "is moive")
     print([(ent.text, ent.label_)for ent in doc.ents])
     rewards = []
     rewards.append(random_tweet)
     print(find_awards(rewards))
-# test_dependency(
+
+def is_movie(title, imdb):
+    """
+    Checks if the given title is a movie in IMDb.
+
+    Parameters:
+    title (str): The title to check.
+
+    Returns:
+    bool: True if the title is a movie, False otherwise.
+    """
     
-# )
+    search_results = imdb.search_movie(title)
+    
+    # Check if the search results contain a movie that matches the title
+    for result in search_results:
+        if result['title'].lower() == title.lower():
+            return True
+    
+    return False
+
 if __name__ == "__main__":
     time1 = time.time()
     All_Tweets = preprocess.preprocess("gg2013.json")
-    print(find_awards(All_Tweets))
-    # test_dependency("Coming up next...Robert Downey Jr. presents the Cecil B. DeMille Award to the MILFtastic (and I mean it) Jodie Foster #goldenglobes")
+    # print(find_awards(All_Tweets))
     time2 = time.time()
     print(time2 - time1, "s")
 # with open("gg2013answers.json", "r") as file:
