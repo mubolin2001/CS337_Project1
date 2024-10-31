@@ -6,8 +6,9 @@ from fuzzywuzzy import process
 import time
 import preprocess
 import json
+from collections import defaultdict
 from spacy.matcher import Matcher
-from imdb import IMDb
+from imdb import Cinemagoer
 def extract_names(text, nlp_model): 
     """
     Extracts and prints the names (PERSON entities) found in the given text.
@@ -143,6 +144,7 @@ def find_awards(all_tweets: list) -> dict:
     Returns:
         dict: A dictionary of detected awards and their counts.
     """
+    # Load the spaCy model outside of the function if possible
     nlp = spacy.load("en_core_web_sm")
 
     # Initialize the Matcher
@@ -150,90 +152,92 @@ def find_awards(all_tweets: list) -> dict:
 
     # Define award patterns
     award_patterns = [
-        # Pattern: "Best" + optional category + optional hyphen + medium/genre
         [
             { "IS_TITLE": True, "LOWER": "best"},
-            {"IS_TITLE": True, "POS": "PROPN", "OP": "+"},  
-            {"TEXT": "-", "OP": "?"},  # Optional hyphen
+            {"IS_TITLE": True, "POS": "PROPN", "OP": "+"},
+            {"TEXT": "-", "OP": "?"},
             {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"},
-             {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"},
+            {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"},
             {"LOWER": "or", "OP": "?"},
             {"IS_TITLE": True, "POS": {"IN": ["PROPN", "NOUN", "ADJ"]}, "OP": "?"}
         ],
-        # Pattern: "Best Performance by Actor/Actress" + "in a ..."
         [
             {"IS_TITLE": True, "LOWER": "best"},
-            {"IS_TITLE": True,"LOWER": "performance"},
+            {"IS_TITLE": True, "LOWER": "performance"},
             {"LOWER": "by"},
             {"LOWER": {"IN": ["a", "an"]}, "OP": "?"},
-            {"IS_TITLE": True,"LOWER": {"IN": ["actor", "actress"]}},
+            {"IS_TITLE": True, "LOWER": {"IN": ["actor", "actress"]}},
             {"LOWER": "in"},
             {"LOWER": "a"},
-            {"POS": {"IN": ["PROPN", "VERB", "NOUN"]}, "OP": "+"},  #in a + " VERB" + "PREPN"
-            {"LOWER": "in", "OP": "?"},
-            {"LOWER": "a", "OP": "?"},
-            {"POS": {"IN": ["PROPN", "VERB", "NOUN"]}, "OP": "?"},
-            {"POS": {"IN": ["PROPN", "VERB", "NOUN"]}, "OP": "?"},
-            {"TEXT": "-", "OP": "?"},  # Optional hyphen
-            {"POS": "PROPN", "OP": "?"}, 
-             {"LOWER": "or", "OP": "?"},
-             {"POS": "PROPN", "OP": "?"}
+            {"POS": {"IN": ["PROPN", "VERB", "NOUN"]}, "OP": "+"},
         ],
     ]
 
     # Add the patterns to the matcher
     matcher.add("AWARD", award_patterns)
 
-    # Store detected awards in a dictionary
-    detected_awards = {}
+    # Use defaultdict to store awards and winners for better performance
+    detected_awards = defaultdict(lambda: {"count": 0, "winners": defaultdict(int)})
 
     # Use nlp.pipe() for faster batch processing
     for doc in nlp.pipe((tweet.text for tweet in all_tweets), batch_size=50):
         matches = matcher(doc)
-        possible_winners = extract_names(doc, nlp)
+        
+        # Extract possible winners only once per tweet
+        possible_winners = extract_names(doc.text, nlp)
+        
         # Convert matches to spans
         spans = [doc[start:end] for match_id, start, end in matches]
-
-        # Filter to keep only the longest non-overlapping matches
         filtered_spans = filter_longest_spans(spans)
 
-        # Store the matches in the dictionary
-        possible_winners = extract_names(doc.text, nlp)
         for span in filtered_spans:
-            award = span.text
+            award = span.text.strip()
             if len(award.split(" ")) > 3:
-                if award not in detected_awards:
-                    detected_awards[award] = {"count": 1, "winners": {}}
+                detected_awards[award]["count"] += 1
+                
+                possible_winners_filter = [winner for winner in possible_winners if len(winner.split(" ")) > 1]
+                
+                if possible_winners_filter:
+                    for winner in possible_winners_filter:
+                        detected_awards[award]["winners"][winner] += 1
                 else:
-                    detected_awards[award]["count"] += 1
-            
-            possible_winners_filter = [winner for winner in possible_winners if len(winner.split(" ") > 2)]
-            #if it can find a person winner
-            if possible_winners_filter:
-                for winner in possible_winners_filter:
-                    if len(winner.split(" ")) > 1:
-                        if winner in detected_awards[award]["winners"]:
-                            detected_awards[award]["winners"][winner] += 1
-                        else:
-                            detected_awards[award]["winners"][winner] = 1
-            
+                    # If no valid person names found, try to identify movies
+                    possible_movie = find_movie_from_text(award)
+                    if possible_movie:
+                        detected_awards[award]["winners"][possible_movie] += 1
 
-
-
-            
-            
-
-    sorted_detected_awards = sorted(detected_awards.items(), key = lambda item: item[1]["count"], reverse=True)
-    #eliminate unnecessary things
-    sorted_detected_awards = {
-        k: v for k, v in sorted(detected_awards.items(), key=lambda item: item[1]["count"], reverse=True)
-    }
+    # Sort detected awards by count
+    sorted_detected_awards = sorted(detected_awards.items(), key=lambda item: item[1]["count"], reverse=True)
+    # Convert to regular dict
+    sorted_detected_awards = dict(sorted_detected_awards)
 
     # Clean award names and winner names
     for award, data in sorted_detected_awards.items():
         data["winners"] = clean_dict_keys(data["winners"])
+
     return sorted_detected_awards
 
+def find_movie_from_text(text):
+    """
+    Tries to find movie title from the given text using regex-based splitters.
+    """
+    # Define regex-based patterns to extract movie titles
+    splitters_after = [r":", r"-", r"goes to", r"winner is"]
+    splitters_before = [r"wins", r"win"]
+
+    for splitter in splitters_after:
+        if re.search(splitter, text):
+            parts = re.split(splitter, text, maxsplit=1)
+            if len(parts) > 1:
+                return parts[1].strip()
+    
+    for splitter in splitters_before:
+        if re.search(splitter, text):
+            parts = re.split(splitter, text, maxsplit=1)
+            if len(parts) > 1:
+                return parts[0].strip()
+    
+    return None
 def filter_longest_spans(spans):
     """Filter overlapping spans to keep only the longest ones."""
     # Sort spans by start index, and if equal, by end index descending
@@ -248,7 +252,7 @@ def filter_longest_spans(spans):
 
     return longest_spans
 def test_dependency(text):
-    ia = IMDb()
+    ia = Cinemagoer()
     random_tweet = Tweet()
     random_tweet.text = text
     nlp = spacy.load("en_core_web_sm")
@@ -285,7 +289,8 @@ def is_movie(title, imdb):
 if __name__ == "__main__":
     time1 = time.time()
     All_Tweets = preprocess.preprocess("gg2013.json")
-    # print(find_awards(All_Tweets))
+   
+    print(find_awards(All_Tweets))
     time2 = time.time()
     print(time2 - time1, "s")
 # with open("gg2013answers.json", "r") as file:
